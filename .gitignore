@@ -1,0 +1,9 @@
+.sah/
+.shell/
+.code-context/
+.ralph/
+.DS_Store
+.build/
+Package.resolved
+__pycache__/
+.claude/settings.local.json
