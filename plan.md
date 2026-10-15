@@ -103,14 +103,16 @@ await tools.reminders.createReminder({
 | Messages | SQLite reads of `chat.db`, AppleScript sends | GRDB read-only reads of `chat.db`, AppleScript sends |
 | Maps and location | CoreLocation, maps backend not named | CoreLocation for the location, MapKit for search, geocode and directions |
 | Music | AppleScript | AppleScript through `/usr/bin/osascript` |
-| Shortcuts | `/usr/bin/shortcuts` | `/usr/bin/shortcuts` through `swift-subprocess` |
+| Shortcuts | `/usr/bin/shortcuts` | `/usr/bin/shortcuts` through `ProcessRunner` of FoundationModelsExtras |
 
 We copy these rules from Osaurus:
 
 - Dates are ISO 8601. A bare date is valid. An invalid date gives a
   correction. A date does not roll over (`2026-02-30` is not valid).
 - The `end` of an all-day event is inclusive.
-- A JSON `null` clears a field on update. An absent field does not change.
+- An absent field does not change on update. To clear a field, the update
+  operation names it in `clear` (decision 10). Osaurus uses JSON `null` for
+  this. We cannot (see 5.4).
 - An update or a delete of a recurring event needs `occurrenceStart`. `span` is
   `this_event` (the default) or `future_events`.
 - A calendar query has a maximum range of four years. The result tells when the
@@ -123,11 +125,13 @@ We copy these rules from Osaurus:
 - `search places` with `near` sorts by distance. Coordinates are range-checked.
 - `play item` changes shuffle only when the call gives `shuffle`.
 - The output of `run shortcut` has a maximum of 1 MiB. The result then has
-  `truncated: true`. A cancel sends SIGTERM, then SIGKILL.
+  `truncated: true`.
 
 We do not copy these from Osaurus:
 
 - The approval rules. Decision 3 removes them.
+- SIGTERM before SIGKILL on a cancel. We use `ProcessRunner` of Extras, which
+  kills the process group with SIGKILL on a timeout or a cancel (see 5.7).
 - The plugin migration (`AppleAppsPluginMigration.swift`). We have no old
   plugins.
 
@@ -145,7 +149,7 @@ result type. Each argument name is camelCase.
 | `list events` | `listEvents` | `start`, `end`, `calendar?`, `query?`, `limit?` |
 | `get event` | `getEvent` | `id`, `occurrenceStart?` |
 | `create event` | `createEvent` | `calendar?`, `title`, `start`, `end`, `allDay?`, `location?`, `notes?`, `url?`, `alarms?`, `recurrence?` |
-| `update event` | `updateEvent` | `id`, `occurrenceStart?`, `span?`, plus the fields of `create event` |
+| `update event` | `updateEvent` | `id`, `occurrenceStart?`, `span?`, `clear?` (`location`, `notes`, `url`, `alarms`, `recurrence`), plus the fields of `create event` |
 | `delete event` | `deleteEvent` | `id`, `occurrenceStart?`, `span?` |
 | `open event` | `openEvent` | `id` |
 
@@ -157,7 +161,7 @@ result type. Each argument name is camelCase.
 | `list reminders` | `listReminders` | `list?`, `status?` (`incomplete`, `completed`, `all`), `dueBefore?`, `dueAfter?`, `query?`, `limit?` |
 | `get reminder` | `getReminder` | `id` |
 | `create reminder` | `createReminder` | `list?`, `title`, `notes?`, `url?`, `due?`, `priority?` |
-| `update reminder` | `updateReminder` | `id`, plus the fields of `create reminder` |
+| `update reminder` | `updateReminder` | `id`, `clear?` (`notes`, `url`, `due`, `priority`), plus the fields of `create reminder` |
 | `complete reminder` | `completeReminder` | `id`, `completed?` (default `true`; `false` opens the reminder again) |
 | `delete reminder` | `deleteReminder` | `id` |
 | `open reminder` | `openReminder` | `id` |
@@ -172,7 +176,7 @@ result type. Each argument name is camelCase.
 | `list groups` | `listGroups` | — |
 | `get contact` | `getContact` | `id` |
 | `create contact` | `createContact` | `givenName?`, `familyName?`, `organization?`, `emails?`, `phones?`, `addresses?`, `note?`, `group?` |
-| `update contact` | `updateContact` | `id`, plus the fields of `create contact` |
+| `update contact` | `updateContact` | `id`, `clear?` (`organization`, `emails`, `phones`, `addresses`, `note`), plus the fields of `create contact` |
 | `open contact` | `openContact` | `id` |
 
 `list groups` is not in Osaurus. The live tests need it to find their own
@@ -289,21 +293,40 @@ These rules are in `Support/` and all the tools use them.
    with no offset (local time), and a bare date. It does not roll over a date.
    The time zone and the clock come from the context, thus the tests can
    inject them.
-4. **`ClearableField<T>`.** It holds the three states of an update field:
-   absent (no change), `null` (clear), and a value. A unit test proves that
-   `@Generable` keeps the difference between absent and `null`. If it does
-   not, see open question 1.
+4. **`clear` on update.** Each update operation has the argument
+   `clear: [String]?`. It is a list of the names of the fields to clear, for
+   example `updateEvent({ id, clear: ["location", "notes"] })`. A shared
+   helper, `ClearList`, parses the names with `parseChoice` against the
+   clearable fields of the operation. An unknown name gives a correction that
+   lists the allowed names. When a call gives a value for a field and also
+   names that field in `clear`, the call gives a correction and changes
+   nothing.
+
+   JSON `null` cannot clear a field, for these reasons from the existing code:
+   - Multitool keeps a JS `null` different from an absent key
+     (`Invocation/ArgumentMarshaler.swift`), and `OperationResolver.resolveParameters`
+     in Extras keeps a present `null` key.
+   - But `AnyOperation` then decodes the payload into the `@Generable` struct.
+     That decode changes a `null` into `nil`, the same as an absent key
+     (`Invocation/ToolInvoker.swift`, the documentation of the `null` check).
+   - No generated schema declares a nullable type. Thus a native tool call,
+     with guided generation, cannot give `null`.
 5. **Result types.** Each result is a flat `Encodable` struct. Each item has a
    stable `id`. Lists have `items` and `truncated`. A list operation has a
    default `limit` and a maximum `limit` in `AppleAppsDefaults`.
 6. **`AppleScriptRunner`.** It runs a script through `/usr/bin/osascript` with
-   `swift-subprocess`. It registers the child in `ProcessRegistry.global`. It
-   gives each argument to the script as an `argv` item, not in the script
-   text, thus no input can inject script code. It has a timeout, and it maps
-   the error `-1743` (not authorized) to `accessDenied`.
-7. **`ProcessRunner`.** It runs `/usr/bin/shortcuts` and `open` with
-   `swift-subprocess`. It caps the output, and it cancels with SIGTERM, then
-   SIGKILL.
+   `ProcessRunner` of Extras (see 5.7). It gives each argument to the script
+   as an `argv` item, not in the script text, thus no input can inject script
+   code. It has a timeout, and it maps the error `-1743` (not authorized) to
+   `accessDenied`.
+7. **Child processes.** The package has no process runner of its own. It uses
+   the public `ProcessRunner` of the `FoundationModelsExtras` product for
+   `osascript`, `/usr/bin/shortcuts` and `open`. That runner spawns the child
+   in its own process group and keeps the pid in `ProcessRegistry.global`
+   while the child runs. It caps the output (`OutputCap`) and tells when it
+   cut the output (`isTruncated`). On a timeout or a cancel, it kills the
+   group with SIGKILL and gives `.timedOut`. It merges stdout and stderr, thus
+   the exit code tells a failure, and the output is then the error text.
 8. **`open …` operations.** Calendar, Reminders, Contacts, Notes and Maps use
    their URL schemes (`ical://`, `x-apple-reminderkit://`, `addressbook://`,
    `maps://`), or AppleScript when no scheme exists. The opener is a
@@ -341,6 +364,53 @@ and the time zone. The public `make` functions make the live backends. An
   state is not known.
 - The process needs Full Disk Access to open `chat.db`. When the open fails,
   the operation gives the `accessDenied` correction.
+
+### 6.2 IDs from AppleScript
+
+We copy the design of Osaurus (`MailService.swift` and `NotesService.swift`
+in `Packages/OsaurusCore/AppleApps/`).
+
+**Mail.**
+
+- The `id` of a message is its RFC Message-ID. It is globally unique, and it
+  does not change when the message moves.
+- Mail's internal id is not an `id` for the model. In AppleScript,
+  `message id` is the RFC Message-ID property, thus the script finds the
+  internal id with `first message of <mailbox> whose id is <n>`.
+- `MailMessageCache` maps a Message-ID to the mailbox path and the internal
+  id. Thus a later call does not scan the mailbox again. It holds a maximum of
+  512 entries. When it is full, it removes the oldest entry. Osaurus does not
+  move an entry on a hit, thus its cache is first-in, first-out. Our cache
+  also moves an entry to the end on a hit (LRU). This is the only change from
+  Osaurus.
+- To find a message, the backend tries these steps in this order:
+  1. The cached mailbox and internal id. The backend then checks that the
+     Message-ID of the result is the same. If it is not, the hit is stale.
+  2. A scan of the given mailbox, then of the cached mailbox, by Message-ID.
+  3. A scan of the inbox by Message-ID.
+- When no step finds the message (error `-1728`), the backend removes the
+  cache entry and gives `notFound`.
+- `move message` moves the message, then polls the destination by
+  Message-ID (10 times, 0.3 seconds apart). It then stores the new mailbox
+  and internal id in the cache. The result keeps the same `id`. When the poll
+  times out, the result is the row from before the move, with the
+  destination as its mailbox. A move to the unified Trash (`Trash`, with no
+  account) uses `delete`.
+
+**Notes.**
+
+- The `id` of a note or a folder is its Core Data id
+  (`x-coredata://…/ICNote/pNNN`). The backend finds a note with
+  `note id <id>`.
+- After `make new note`, Notes gives a provisional id. When Notes saves the
+  note, the same object gives its permanent id. Thus `create note` polls the
+  id (6 times, 0.25 seconds apart) until it changes, and returns the
+  permanent id.
+- An `id` that finds no note gives the `notFound` correction. The correction
+  tells the model to call `list notes` or `search notes` and use one of their
+  `id` values.
+- A `folder` argument that starts with `x-coredata://` is a folder id. Any
+  other `folder` value is a folder name.
 
 ## 7. Public API
 
@@ -400,9 +470,8 @@ FoundationModelsAppleApps/
       ToolSupport.swift          # ToolOutcome, parseChoice, outcome(of:)
       AppleAppsError.swift
       DateArgument.swift
-      ClearableField.swift
+      ClearList.swift
       AppleScriptRunner.swift
-      ProcessRunner.swift
       URLOpener.swift
     Calendar/
       CalendarTool.swift         # name, description, aliases, operations(), make
@@ -414,7 +483,7 @@ FoundationModelsAppleApps/
     Reminders/   ...             # same shape
     Contacts/    ...
     Notes/       ...             # plus NotesScripts.swift (AppleScript text)
-    Mail/        ...             # plus MailScripts.swift, MailboxPath.swift
+    Mail/        ...             # plus MailScripts.swift, MailboxPath.swift, MailMessageCache.swift
     Messages/    ...             # plus ChatDatabase.swift, AttributedBodyDecoder.swift
     Maps/        ...
     Music/       ...             # plus MusicScripts.swift
@@ -441,7 +510,8 @@ FoundationModelsAppleApps/
   `swissArmyHammerPackage(name:)` with a URL and `branch: "main"`.
 - Dependencies:
   - FoundationModelsExtras: products `Operations` and `FoundationModelsExtras`.
-  - `swift-subprocess`, `exact: "1.0.0-beta.1"`, the same pin as Multitool.
+    The second product gives `ProcessRunner` and `ProcessRegistry`. Thus the
+    package does not need `swift-subprocess`.
   - GRDB, `from: "7.0.0"`, the same as CodeContext.
   - `swift-log` for telemetry. The library does not link `swift-otel`.
 - `PackageManifestTests` checks that the library does not link Multitool and
@@ -466,28 +536,37 @@ for app in enabledApps {
 `RegistrySource` expands each `OperationTool` into verbs:
 `tools.calendar.listEvents`, `tools.mail.composeMessage`. A test in the
 integration package proves that no group name conflicts with a noun of
-Multitool (`files`, `web`, `git`, `environment`, `shell`, `code_context`).
+Multitool (`files`, `web`, `git`, `environment`, `shell`) or with a group that
+the agent mounts (`code_context`, `skills`, `agents`).
 
 ### 10.2 FoundationModelsACPAgent
 
 1. **Package.swift.** Add the URL dependency on FoundationModelsAppleApps.
-2. **`Configuration/ToolSectionCodec.swift`.** Add the section
-   `appleApps: ToolSection<AppleAppsToolOptions>`. Add it to `optionKeys` and
-   to `init(from:)`. `AppleAppsToolOptions` has one `Bool` for each app. All
-   are `false` by default. Thus an absent section or `appleApps: {}` mounts no
-   app, and the user turns on each app by name:
+2. **`Configuration/ToolSectionCodec.swift`.** Add the property
+   `appleApps = ToolSection<AppleAppsToolOptions>.enabled(AppleAppsToolOptions())`
+   to `ToolsConfiguration`. Add `appleApps` to its `CodingKeys`, to
+   `init(from:)` and to `optionKeys`. `AppleAppsToolOptions` conforms to
+   `ToolSectionOptions` and `KeyCheckedSection`, and has one `Bool` for each
+   app. All are `false` by default. Thus an absent key, `appleApps: {}`,
+   `appleApps: true` and `appleApps: false` all mount no app. The user turns
+   on each app by name, in the `tools:` section:
 
    ```yaml
-   appleApps:
-     calendar: true
-     reminders: true
-     mail: true
+   tools:
+     appleApps:
+       calendar: true
+       reminders: true
+       mail: true
    ```
 
-   An unknown key is an error, through `KeyCheckedSection`.
-3. **`Tools/ToolCatalog.swift`.** Add `composeAppleApps`. It calls
+   An unknown key in the body is an error (`ConfigurationError.unknownKey`),
+   because the loader checks the body against `optionKeys`.
+3. **`Resources/builtin.config.yaml`.** Add the `appleApps` entry with each
+   app key set to `false`. The tests of `BuiltinConfigurationFile` require
+   that this file names each key of `optionKeys`.
+4. **`Tools/ToolCatalog.swift`.** Add `composeAppleApps`. It calls
    `builder.addGroup(named:_:)` once for each enabled app.
-4. **Info.plist.** The agent is a CLI. EventKit, Contacts and CoreLocation
+5. **Info.plist.** The agent is a CLI. EventKit, Contacts and CoreLocation
    need usage strings in the `Info.plist` of the process. The agent embeds an
    `Info.plist` in the binary with the linker flag
    `-sectcreate __TEXT __info_plist`. The keys are
@@ -495,7 +574,7 @@ Multitool (`files`, `web`, `git`, `environment`, `shell`, `code_context`).
    `NSRemindersFullAccessUsageDescription`, `NSContactsUsageDescription`,
    `NSLocationWhenInUseUsageDescription` and `NSAppleEventsUsageDescription`.
    The example of this package does the same.
-5. **README.** Add one row for each app to the table in § Tools.
+6. **README.** Add one row for each app to the table in § Tools.
 
 ## 11. Permissions (TCC)
 
@@ -528,12 +607,14 @@ select tests.
 | `<App>ToolTests` | The tool fuses its schema. The op names agree with the golden. No alias key is a real verb or noun. |
 | `<App><Op>Tests` | Each operation with a fake backend: the arguments go to the backend, the result encodes as expected, and each recoverable error gives a correction. |
 | `DateArgumentTests` | ISO 8601 forms, bare dates, no roll-over, inclusive all-day end, injected time zone. |
-| `ClearableFieldTests` | Absent, `null` and a value stay different through `@Generable`. |
+| `ClearListTests` | Allowed names, an unknown name, and a field that is both set and cleared. |
 | `AppleScriptRunnerTests` | Arguments go as `argv`, never in the script text. `-1743` gives `accessDenied`. The timeout stops the child. Uses a fake `osascript` script in a temporary directory. |
 | `MailboxPathTests` | `Account/Folder/Subfolder` and `\/`. |
+| `MailMessageCacheTests` | The 512-entry bound and LRU order, a stale hit falls back to a scan, `-1728` removes the entry, `move message` keeps the `id`. Uses a fake script runner. |
+| `NotesIdTests` | `create note` returns the permanent id after the poll. An id that finds no note gives the `notFound` correction. A `folder` value is an id or a name. Uses a fake script runner. |
 | `ChatDatabaseTests` | Reads of the synthetic `Fixtures/chat.db`, including `attributedBody`. |
 | `SendMessageTests` | Delivered, failed then SMS, and not known (no second send), with a fake database and a fake sender. |
-| `ShortcutsCLIBackendTests` | Output cap and `truncated`, SIGTERM then SIGKILL. Uses a fake CLI script. |
+| `ShortcutsCLIBackendTests` | The output cap gives `truncated: true`. A timeout gives the `timeout` correction. Uses a fake CLI script. |
 | `PackageManifestTests` | No Multitool and no `swift-otel` in the library. |
 
 ### 12.2 Level 2: live, no model
@@ -575,9 +656,10 @@ with a green `swift test` and a green
 1. **Package skeleton.** `Package.swift`, the empty target, the test target,
    the `IntegrationTests` package, `PackageManifestTests`, a minimum README.
 2. **Shared support.** `ToolSupport`, `ToolOutcome`, `AppleAppsError`,
-   `DateArgument`, `ClearableField`, `AppleAppsDefaults`,
-   `AppleAppsConfiguration`, `URLOpener`. Includes the `@Generable` null test.
-3. **Runners.** `AppleScriptRunner` and `ProcessRunner`, with their tests.
+   `DateArgument`, `ClearList`, `AppleAppsDefaults`,
+   `AppleAppsConfiguration`, `URLOpener`.
+3. **Script runner.** `AppleScriptRunner` over `ProcessRunner` of Extras, with
+   its tests.
 4. **Public entry point.** `AppleApp`, `AppleAppsToolContext`,
    `AppleAppsTools` with no apps yet, and `AppleAppsAccess`.
 5. **Calendar.** Backend, operations, aliases, tool, unit tests, live tests.
@@ -622,21 +704,21 @@ Items 5 to 14 depend only on items 1 to 4. Thus they can run in parallel.
 7. **AppleScript through `osascript`. — DECIDED (2026-10-14).** Not
    `NSAppleScript`. `NSAppleScript` must run on one thread and cannot be
    cancelled. A child process can have a timeout and can be stopped, and
-   `swift-subprocess` is already in the family.
+   `ProcessRunner` of Extras already does this.
 8. **GRDB for `chat.db`. — DECIDED (2026-10-14).** The same library as
    CodeContext. The database opens read-only.
 9. **MapKit for Maps. — DECIDED (2026-10-14).** Osaurus does not name its
    maps backend. MapKit needs no API key.
+10. **A `clear` list clears fields. — DECIDED (2026-10-14).** Each update
+    operation has `clear: [String]?`. JSON `null` cannot clear a field,
+    because the `@Generable` decode changes `null` into `nil` (see 5.4). No
+    change to Extras is necessary. This was open question 1.
+11. **AppleScript IDs follow Osaurus. — DECIDED (2026-10-14).** See 6.2.
+    This was open question 2.
 
 ## 15. Open questions
 
-1. **Clear a field with `null`.** If `@Generable` does not keep the
-   difference between absent and `null`, the update operations get a `clear`
-   argument (a list of field names) in place of `null`. Work item 2 answers
-   this.
-2. **IDs from AppleScript.** Notes and Mail give IDs that can change when an
-   item moves. Work items 8 and 9 measure this. If an ID changes, the result
-   of `move message` gives the new ID.
+None at this time.
 
 ## 16. Out of scope
 
