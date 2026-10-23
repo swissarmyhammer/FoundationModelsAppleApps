@@ -811,8 +811,8 @@ with a green `swift test` and a green
 20. **Host modes.** `mode` in `make` and `operationNames(in:)`, the static list
     of sandboxed operations of each tool, the check that refuses `open` mode
     in a sandboxed process, `requiredEntitlements(for:)`, and
-    `HostModeTests`. Depends on EXTRAS-12 (`HostMode` in Extras) and on items
-    5 to 14.
+    `HostModeTests`. Depends on EXTRAS-12 (`HostMode` in Extras; Step 1 of
+    the TestudoApp roadmap, not built yet) and on items 5 to 14.
 21. **In-process Apple event runner.** `AppleEventRunner`,
     `InProcessAppleEventRunner`, `ShortcutsAppleEventBackend`, and the change
     of the Music, Mail and Shortcuts backends to take the runner. A probe
@@ -870,20 +870,22 @@ Items 5 to 14 depend only on items 1 to 4. Thus they can run in parallel.
 
 ## 15. Open questions
 
-1. **The Testudo product scope.** Is `calendar`, `reminders`, `contacts`,
-   `maps`, `music`, `shortcuts` and Mail compose enough for the App Store
-   app? Or must Testudo also have Notes and Messages, which only OpenTestudo
-   can give? This is a question for the TestudoApp design.
+1. **The Testudo product scope. — CLOSED (D135 of the TestudoApp design,
+   2026-10-23).** The sandboxed set is enough. Notes and Messages are
+   OpenTestudo-only tools. When a user asks Testudo for them, the agent says
+   that the work needs OpenTestudo and gives the link (D128 (i)). The
+   sandboxed set is APPLE-3 in
+   `TestudoApp/features/packages/foundationmodels-appleapps.md`.
 2. **Messages reads in the sandbox.** The user could give the app access to
    `~/Library/Messages` with an open panel (a security-scoped bookmark), and
    also Full Disk Access. Do both together let a sandboxed app read
    `chat.db`, `chat.db-wal` and `chat.db-shm`? This is **unverified**, and the
    user flow is poor. Until a test proves it, `messages` is not in
    `sandboxed` mode.
-3. **Shortcuts as the path for the other apps.** A user shortcut can read
-   Notes and Messages, and `run shortcut` works in the sandbox. Is a set of
-   shortcuts that Testudo installs (with the consent of the user) an
-   acceptable way to give the read operations of `notes` in `sandboxed` mode?
+3. **Shortcuts as the path for the other apps. — CLOSED: no bridge (D135 of
+   the TestudoApp design, 2026-10-23).** Testudo installs no user shortcuts
+   to reach Notes or Messages. `run shortcut` runs only the shortcuts that
+   the user made.
 
 ## 16. Out of scope
 
