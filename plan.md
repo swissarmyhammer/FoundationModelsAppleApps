@@ -727,7 +727,7 @@ the agent mounts (`code_context`, `skills`, `agents`).
 | `messages` | Full Disk Access, and Automation → Messages | The open of `chat.db` fails, which gives `accessDenied`. macOS cannot ask for Full Disk Access. |
 | `maps` | Location | `requestWhenInUseAuthorization()`, wait a maximum of 120 seconds |
 | `music` | Automation → Music | Same as `notes` |
-| `shortcuts` | None. A shortcut can ask for its own permissions. | — |
+| `shortcuts` | `open` mode: none. `sandboxed` mode: Automation → Shortcuts Events (4.9). In both modes, a shortcut can ask for its own permissions. | `sandboxed` mode: same as `notes`. The correction tells the user to allow it in System Settings > Privacy & Security > Automation. |
 
 macOS gives the permission to the responsible process. For a CLI agent that
 is the terminal app or the app that started the agent. `docs/SECURITY.md` and
