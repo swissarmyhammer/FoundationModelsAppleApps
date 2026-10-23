@@ -723,6 +723,9 @@ None at this time.
 ## 16. Out of scope
 
 - Apps that are not in the list: Photos, Safari, Finder, Home, Files.
+- GUI control of any app through the Accessibility tree (a Markdown document
+  of a window, and one act operation). This is the `gui` tool of
+  FoundationModelsMacControl (`FoundationModelsMacControl/plan.md`).
 - iOS and iPadOS. The package is for macOS only.
 - An approval or policy layer (decision 3).
 - Mail attachments and Messages attachments, other than their names.
