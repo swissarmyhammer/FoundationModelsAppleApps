@@ -45,7 +45,7 @@ document do not agree, the code and the README are correct.
 A host mounts the tools of the apps that it wants:
 
 ```swift
-let tools = try AppleAppsTools.make(apps: [.calendar, .reminders, .mail])
+let tools = try AppleAppsTools.make(apps: [.calendar, .reminders, .mail], mode: .open)
 let session = LanguageModelSession(tools: tools, instructions: instructions)
 ```
 
@@ -90,6 +90,13 @@ await tools.reminders.createReminder({
    tests use a fake backend. No unit test touches the real data of the user.
 8. **All nine apps in one phase.** The work items are one flat list, in the
    order of their dependencies.
+9. **Two modes: `open` and `sandboxed`.** The same as MacControl (D128 of the
+   TestudoApp design). OpenTestudo and the ACP agent run in `open` mode, with
+   all operations. Testudo is on the Mac App Store, in the App Sandbox, and
+   runs in `sandboxed` mode. In that mode a tool registers only the
+   operations that work in the sandbox (the "Sandbox" column of each table in
+   section 4, and section 4.11). The model never sees an operation that
+   cannot work. A tool with no such operation is not registered.
 
 ## 3. Source material
 
@@ -137,107 +144,123 @@ We do not copy these from Osaurus:
 
 ## 4. The tools and their operations
 
-The tables give the op string, the verb that Multitool makes from it, and the
-main arguments. The work item of each tool sets the full argument list and the
-result type. Each argument name is camelCase.
+The tables give the op string, the verb that Multitool makes from it, the
+main arguments, and whether the operation is registered in `sandboxed` mode
+(principle 9, section 4.11). The work item of each tool sets the full
+argument list and the result type. Each argument name is camelCase.
 
 ### 4.1 `calendar` (EventKit)
 
-| Op | Multitool verb | Main arguments |
-|---|---|---|
-| `list calendars` | `listCalendars` | — |
-| `list events` | `listEvents` | `start`, `end`, `calendar?`, `query?`, `limit?` |
-| `get event` | `getEvent` | `id`, `occurrenceStart?` |
-| `create event` | `createEvent` | `calendar?`, `title`, `start`, `end`, `allDay?`, `location?`, `notes?`, `url?`, `alarms?`, `recurrence?` |
-| `update event` | `updateEvent` | `id`, `occurrenceStart?`, `span?`, `clear?` (`location`, `notes`, `url`, `alarms`, `recurrence`), plus the fields of `create event` |
-| `delete event` | `deleteEvent` | `id`, `occurrenceStart?`, `span?` |
-| `open event` | `openEvent` | `id` |
+| Op | Multitool verb | Main arguments | Sandbox |
+|---|---|---|---|
+| `list calendars` | `listCalendars` | — | Yes |
+| `list events` | `listEvents` | `start`, `end`, `calendar?`, `query?`, `limit?` | Yes |
+| `get event` | `getEvent` | `id`, `occurrenceStart?` | Yes |
+| `create event` | `createEvent` | `calendar?`, `title`, `start`, `end`, `allDay?`, `location?`, `notes?`, `url?`, `alarms?`, `recurrence?` | Yes |
+| `update event` | `updateEvent` | `id`, `occurrenceStart?`, `span?`, `clear?` (`location`, `notes`, `url`, `alarms`, `recurrence`), plus the fields of `create event` | Yes |
+| `delete event` | `deleteEvent` | `id`, `occurrenceStart?`, `span?` | Yes |
+| `open event` | `openEvent` | `id` | Yes (URL scheme) |
 
 ### 4.2 `reminders` (EventKit)
 
-| Op | Multitool verb | Main arguments |
-|---|---|---|
-| `list lists` | `listLists` | — |
-| `list reminders` | `listReminders` | `list?`, `status?` (`incomplete`, `completed`, `all`), `dueBefore?`, `dueAfter?`, `query?`, `limit?` |
-| `get reminder` | `getReminder` | `id` |
-| `create reminder` | `createReminder` | `list?`, `title`, `notes?`, `url?`, `due?`, `priority?` |
-| `update reminder` | `updateReminder` | `id`, `clear?` (`notes`, `url`, `due`, `priority`), plus the fields of `create reminder` |
-| `complete reminder` | `completeReminder` | `id`, `completed?` (default `true`; `false` opens the reminder again) |
-| `delete reminder` | `deleteReminder` | `id` |
-| `open reminder` | `openReminder` | `id` |
+| Op | Multitool verb | Main arguments | Sandbox |
+|---|---|---|---|
+| `list lists` | `listLists` | — | Yes |
+| `list reminders` | `listReminders` | `list?`, `status?` (`incomplete`, `completed`, `all`), `dueBefore?`, `dueAfter?`, `query?`, `limit?` | Yes |
+| `get reminder` | `getReminder` | `id` | Yes |
+| `create reminder` | `createReminder` | `list?`, `title`, `notes?`, `url?`, `due?`, `priority?` | Yes |
+| `update reminder` | `updateReminder` | `id`, `clear?` (`notes`, `url`, `due`, `priority`), plus the fields of `create reminder` | Yes |
+| `complete reminder` | `completeReminder` | `id`, `completed?` (default `true`; `false` opens the reminder again) | Yes |
+| `delete reminder` | `deleteReminder` | `id` | Yes |
+| `open reminder` | `openReminder` | `id` | Yes (URL scheme) |
 
 ### 4.3 `contacts` (Contacts.framework)
 
-| Op | Multitool verb | Main arguments |
-|---|---|---|
-| `get me` | `getMe` | — |
-| `search contacts` | `searchContacts` | `query`, `limit?` |
-| `list contacts` | `listContacts` | `group?`, `limit?`, `offset?` |
-| `list groups` | `listGroups` | — |
-| `get contact` | `getContact` | `id` |
-| `create contact` | `createContact` | `givenName?`, `familyName?`, `organization?`, `emails?`, `phones?`, `addresses?`, `note?`, `group?` |
-| `update contact` | `updateContact` | `id`, `clear?` (`organization`, `emails`, `phones`, `addresses`, `note`), plus the fields of `create contact` |
-| `open contact` | `openContact` | `id` |
+| Op | Multitool verb | Main arguments | Sandbox |
+|---|---|---|---|
+| `get me` | `getMe` | — | Yes |
+| `search contacts` | `searchContacts` | `query`, `limit?` | Yes |
+| `list contacts` | `listContacts` | `group?`, `limit?`, `offset?` | Yes |
+| `list groups` | `listGroups` | — | Yes |
+| `get contact` | `getContact` | `id` | Yes |
+| `create contact` | `createContact` | `givenName?`, `familyName?`, `organization?`, `emails?`, `phones?`, `addresses?`, `note?`, `group?` | Yes |
+| `update contact` | `updateContact` | `id`, `clear?` (`organization`, `emails`, `phones`, `addresses`, `note`), plus the fields of `create contact` | Yes |
+| `open contact` | `openContact` | `id` | Yes (URL scheme) |
 
 `list groups` is not in Osaurus. The live tests need it to find their own
 group (see 12.2).
 
 ### 4.4 `notes` (AppleScript)
 
-| Op | Multitool verb | Main arguments |
-|---|---|---|
-| `list folders` | `listFolders` | `account?` |
-| `list notes` | `listNotes` | `folder?`, `limit?` |
-| `search notes` | `searchNotes` | `query`, `folder?`, `limit?` |
-| `get note` | `getNote` | `id` |
-| `create note` | `createNote` | `folder?`, `title`, `body` |
-| `append note` | `appendNote` | `id`, `body` |
-| `open note` | `openNote` | `id` |
+| Op | Multitool verb | Main arguments | Sandbox |
+|---|---|---|---|
+| `list folders` | `listFolders` | `account?` | No |
+| `list notes` | `listNotes` | `folder?`, `limit?` | No |
+| `search notes` | `searchNotes` | `query`, `folder?`, `limit?` | No |
+| `get note` | `getNote` | `id` | No |
+| `create note` | `createNote` | `folder?`, `title`, `body` | No |
+| `append note` | `appendNote` | `id`, `body` | No |
+| `open note` | `openNote` | `id` | No (see below) |
 
 `get note` replaces `notes_read` of Osaurus, because `get` is the read verb of
 all the other tools.
 
+Notes publishes only the scripting access group `com.apple.Notes.openlocation`.
+`open note` could use it, but in `sandboxed` mode no other operation gives a
+note `id`. Thus the `notes` tool is not registered in `sandboxed` mode.
+
 ### 4.5 `mail` (AppleScript)
 
-| Op | Multitool verb | Main arguments |
-|---|---|---|
-| `list mailboxes` | `listMailboxes` | `account?` |
-| `list messages` | `listMessages` | `mailbox`, `unreadOnly?`, `limit?` |
-| `get message` | `getMessage` | `id` |
-| `search messages` | `searchMessages` | `query`, `mailbox?`, `field?` (`subject`, `sender`, `body`, `any`), `limit?` |
-| `get thread` | `getThread` | `id` |
-| `compose message` | `composeMessage` | `to`, `cc?`, `bcc?`, `subject`, `body`, `send?` (default `false`: open a draft) |
-| `reply message` | `replyMessage` | `id`, `body`, `replyAll?`, `send?` (default `false`) |
-| `move message` | `moveMessage` | `id`, `mailbox` |
-| `mark message` | `markMessage` | `id`, `read?`, `flagged?` |
+| Op | Multitool verb | Main arguments | Sandbox |
+|---|---|---|---|
+| `list mailboxes` | `listMailboxes` | `account?` | No |
+| `list messages` | `listMessages` | `mailbox`, `unreadOnly?`, `limit?` | No |
+| `get message` | `getMessage` | `id` | No |
+| `search messages` | `searchMessages` | `query`, `mailbox?`, `field?` (`subject`, `sender`, `body`, `any`), `limit?` | No |
+| `get thread` | `getThread` | `id` | No |
+| `compose message` | `composeMessage` | `to`, `cc?`, `bcc?`, `subject`, `body`, `send?` (default `false`: open a draft) | Yes (`com.apple.mail.compose`) |
+| `reply message` | `replyMessage` | `id`, `body`, `replyAll?`, `send?` (default `false`) | No |
+| `move message` | `moveMessage` | `id`, `mailbox` | No |
+| `mark message` | `markMessage` | `id`, `read?`, `flagged?` | No |
 
 `mark message` replaces `mail_set_status` of Osaurus. `set status` gives the
 verb `setStatus`, which does not tell the model which object changes.
 
+Mail publishes only the scripting access group `com.apple.mail.compose`, for
+the outgoing message. Thus only `compose message` works in `sandboxed` mode.
+Whether the `send` command is in that group is **unverified** (work item 21).
+When it is not, `compose message` in `sandboxed` mode has no `send` argument
+and always opens a draft.
+
 ### 4.6 `messages` (chat.db and AppleScript)
 
-| Op | Multitool verb | Main arguments |
-|---|---|---|
-| `list conversations` | `listConversations` | `limit?` |
-| `get conversation` | `getConversation` | `id`, `limit?`, `before?` |
-| `list unread` | `listUnread` | `limit?` |
-| `search messages` | `searchMessages` | `query`, `conversation?`, `limit?` |
-| `send message` | `sendMessage` | `to` (handle or conversation id), `text` |
+| Op | Multitool verb | Main arguments | Sandbox |
+|---|---|---|---|
+| `list conversations` | `listConversations` | `limit?` | No |
+| `get conversation` | `getConversation` | `id`, `limit?`, `before?` | No |
+| `list unread` | `listUnread` | `limit?` | No |
+| `search messages` | `searchMessages` | `query`, `conversation?`, `limit?` | No |
+| `send message` | `sendMessage` | `to` (handle or conversation id), `text` | No |
 
 `get conversation` replaces `messages_read` of Osaurus.
 
+Messages publishes no scripting access group, so a sandboxed app cannot send.
+The sandbox blocks reads of `~/Library/Messages`, and Full Disk Access does not
+remove that block. Thus the `messages` tool is not registered in `sandboxed`
+mode (open question 2).
+
 ### 4.7 `maps` (CoreLocation and MapKit)
 
-| Op | Multitool verb | Main arguments |
-|---|---|---|
-| `get location` | `getLocation` | — |
-| `geocode address` | `geocodeAddress` | `address` |
-| `reverse_geocode coordinate` | `reverseGeocodeCoordinate` | `latitude`, `longitude` |
-| `search places` | `searchPlaces` | `query`, `near?`, `limit?` |
-| `explore places` | `explorePlaces` | `category`, `near?`, `limit?` |
-| `get directions` | `getDirections` | `from?`, `to`, `transport?` (`driving`, `walking`, `transit`) |
-| `get eta` | `getEta` | `from?`, `to`, `transport?` |
-| `open map` | `openMap` | `query?`, `latitude?`, `longitude?`, `directionsTo?` |
+| Op | Multitool verb | Main arguments | Sandbox |
+|---|---|---|---|
+| `get location` | `getLocation` | — | Yes |
+| `geocode address` | `geocodeAddress` | `address` | Yes |
+| `reverse_geocode coordinate` | `reverseGeocodeCoordinate` | `latitude`, `longitude` | Yes |
+| `search places` | `searchPlaces` | `query`, `near?`, `limit?` | Yes |
+| `explore places` | `explorePlaces` | `category`, `near?`, `limit?` | Yes |
+| `get directions` | `getDirections` | `from?`, `to`, `transport?` (`driving`, `walking`, `transit`) | Yes |
+| `get eta` | `getEta` | `from?`, `to`, `transport?` | Yes |
+| `open map` | `openMap` | `query?`, `latitude?`, `longitude?`, `directionsTo?` | Yes (URL scheme) |
 
 The location operations of Osaurus (`location_*`) are in the `maps` tool,
 because each app has one tool. When `from` or `near` is absent, the operation
@@ -246,21 +269,27 @@ the permission dialog.
 
 ### 4.8 `music` (AppleScript)
 
-| Op | Multitool verb | Main arguments |
-|---|---|---|
-| `get now_playing` | `getNowPlaying` | — |
-| `control playback` | `controlPlayback` | `action` (`play`, `pause`, `toggle`, `next`, `previous`, `stop`) |
-| `set volume` | `setVolume` | `level` (0 to 100) |
-| `list playlists` | `listPlaylists` | — |
-| `search library` | `searchLibrary` | `query`, `kind?` (`track`, `album`, `artist`, `playlist`), `limit?` |
-| `play item` | `playItem` | `id` or `query`, `kind?`, `shuffle?` |
+| Op | Multitool verb | Main arguments | Sandbox |
+|---|---|---|---|
+| `get now_playing` | `getNowPlaying` | — | Yes (`com.apple.Music.playback`) |
+| `control playback` | `controlPlayback` | `action` (`play`, `pause`, `toggle`, `next`, `previous`, `stop`) | Yes (`com.apple.Music.playback`) |
+| `set volume` | `setVolume` | `level` (0 to 100) | Yes (`com.apple.Music.playback`, **unverified**) |
+| `list playlists` | `listPlaylists` | — | Yes (`com.apple.Music.library.read`) |
+| `search library` | `searchLibrary` | `query`, `kind?` (`track`, `album`, `artist`, `playlist`), `limit?` | Yes (`com.apple.Music.library.read`) |
+| `play item` | `playItem` | `id` or `query`, `kind?`, `shuffle?` | Yes (`com.apple.Music.playback`) |
 
-### 4.9 `shortcuts` (`/usr/bin/shortcuts`)
+### 4.9 `shortcuts` (`/usr/bin/shortcuts`; Apple events in `sandboxed` mode)
 
-| Op | Multitool verb | Main arguments |
-|---|---|---|
-| `list shortcuts` | `listShortcuts` | `folder?` |
-| `run shortcut` | `runShortcut` | `name`, `input?`, `timeoutSeconds?` |
+| Op | Multitool verb | Main arguments | Sandbox |
+|---|---|---|---|
+| `list shortcuts` | `listShortcuts` | `folder?` | Yes (`com.apple.shortcuts.run`, **unverified**) |
+| `run shortcut` | `runShortcut` | `name`, `input?`, `timeoutSeconds?` | Yes (`com.apple.shortcuts.run`) |
+
+In `sandboxed` mode the tool cannot start `/usr/bin/shortcuts`, because a
+child process inherits the sandbox. The sandboxed backend sends Apple events
+instead. Shortcuts publishes the access group `com.apple.shortcuts.run`. Which
+app receives the events (Shortcuts, or Shortcuts Events) and whether
+`folder` works there are **unverified** (work item 21).
 
 ### 4.10 Aliases
 
@@ -276,6 +305,52 @@ Examples:
 - `mail`: `send` → `compose`, `read` → `get`, `email` → `message`.
 - `messages`: `text` → `send`, `chat` → `conversation`.
 - `music`: `song` → `track` in `kind`, `playback` → `control`.
+
+### 4.11 The `sandboxed` mode
+
+A sandboxed app (the App Sandbox of the Mac App Store) has these limits:
+
+- **Child processes inherit the sandbox.** A child does not get the
+  entitlements of the app. Thus `/usr/bin/osascript` and `/usr/bin/shortcuts`
+  cannot send Apple events or read outside the container for the app.
+- **Apple events need a scripting access group.** The app sends Apple events
+  in its own process, with the entitlement
+  `com.apple.security.scripting-targets`. Each target app lists the groups
+  that it publishes in its `sdef`. The other path, the entitlement
+  `com.apple.security.temporary-exception.apple-events`, is not used: App
+  Review usually rejects it.
+- **Frameworks with TCC work.** EventKit, Contacts and CoreLocation work with
+  their `personal-information` entitlements. MapKit needs
+  `com.apple.security.network.client`.
+- **URL schemes work.** `NSWorkspace.open(_:)` needs no entitlement.
+
+The scripting access groups on macOS 27, from `sdef` on each app (2026-10-23):
+
+| App | Access groups |
+|---|---|
+| Mail | `com.apple.mail.compose` |
+| Notes | `com.apple.Notes.openlocation` |
+| Music | `com.apple.Music.library.read`, `com.apple.Music.library.read-write`, `com.apple.Music.playback`, `com.apple.Music.user-interface` |
+| Shortcuts | `com.apple.shortcuts.run`, `com.apple.shortcuts.organize` |
+| Calendar | `com.apple.iCal.read`, `com.apple.iCal.read-write`, `com.apple.iCal.UI` (not used: EventKit is better) |
+| Messages | none |
+
+The result in `sandboxed` mode:
+
+| Tool | Registered | Operations |
+|---|---|---|
+| `calendar`, `reminders`, `contacts`, `maps` | Yes | All |
+| `music` | Yes | All, through in-process Apple events (5.9) |
+| `shortcuts` | Yes | All, through in-process Apple events (5.9) |
+| `mail` | Yes | `compose message` only |
+| `notes` | No | — |
+| `messages` | No | — |
+
+Each tool has the static list of its sandboxed operations. In `sandboxed` mode,
+`make` builds the `OperationTool` with only those operations. Thus the fused
+schema, the op names and the Multitool verbs show only what works. A request
+for a tool with no sandboxed operation (`notes`, `messages`) gives no tool and
+no error: `make(apps:)` leaves it out, and `make(app:)` returns `nil`.
 
 ## 5. Shared rules
 
@@ -331,6 +406,22 @@ These rules are in `Support/` and all the tools use them.
    their URL schemes (`ical://`, `x-apple-reminderkit://`, `addressbook://`,
    `maps://`), or AppleScript when no scheme exists. The opener is a
    protocol, thus a unit test records the URL and opens nothing.
+9. **`AppleEventRunner`, for `sandboxed` mode.** One protocol with two live
+   implementations. `OsascriptRunner` is the `AppleScriptRunner` of 5.6, for
+   `open` mode. `InProcessAppleEventRunner` is for `sandboxed` mode. It runs a
+   compiled `NSAppleScript` with a handler call
+   (`executeAppleEvent(_:error:)`), and gives the arguments as an
+   `NSAppleEventDescriptor` list, never in the script text. `NSAppleScript`
+   is not thread-safe. Thus the runner runs all scripts on one dedicated
+   thread, one at a time. It cannot cancel a script that runs. Thus it
+   sets the Apple event timeout (`with timeout of N seconds` in each handler)
+   to `scriptTimeout`, and gives `timeout` when it ends. It maps `-1743` to
+   `accessDenied` and `-10004` (privilege violation: the event is not in a
+   granted access group) to `unsupported`, with a correction that names the
+   sandbox. The Music and Shortcuts backends take the runner, so the same
+   backend works in both modes. The Shortcuts backend has two
+   implementations: `ShortcutsCLIBackend` (`open`) and
+   `ShortcutsAppleEventBackend` (`sandboxed`).
 
 ## 6. Backends
 
@@ -345,8 +436,8 @@ Each app has one backend protocol, one live backend and one fake backend.
 | Mail | `MailBackend` | `AppleScriptMailBackend` | Parses and escapes the mailbox path. |
 | Messages | `MessagesBackend` | `ChatDatabaseMessagesBackend` | GRDB, read-only, on `~/Library/Messages/chat.db`. Sends through AppleScript. |
 | Maps | `MapsBackend` | `MapKitMapsBackend` | `CLLocationManager`, `MKLocalSearch`, `MKDirections`, `CLGeocoder`. |
-| Music | `MusicBackend` | `AppleScriptMusicBackend` | — |
-| Shortcuts | `ShortcutsBackend` | `ShortcutsCLIBackend` | — |
+| Music | `MusicBackend` | `AppleScriptMusicBackend` | Takes an `AppleEventRunner` (5.9), so it works in both modes. |
+| Shortcuts | `ShortcutsBackend` | `ShortcutsCLIBackend` (`open`), `ShortcutsAppleEventBackend` (`sandboxed`) | — |
 
 `AppleAppsToolContext` holds the backend of each app, the opener, the clock
 and the time zone. The public `make` functions make the live backends. An
@@ -425,19 +516,24 @@ public enum AppleAppsTools {
     /// The name of the tool of each app. The name is the raw value of the app.
     public static let toolNames: [AppleApp: String]
 
-    /// The op strings of each tool, in the order of its fused schema.
-    public static let operationNames: [AppleApp: [String]]
+    /// The op strings of each tool in the given mode, in the order of its
+    /// fused schema. An app with no operation in the mode is absent.
+    public static func operationNames(in mode: HostMode) -> [AppleApp: [String]]
 
-    /// Makes the tool of one app.
+    /// Makes the tool of one app, or `nil` when the app has no operation in
+    /// the mode (in `sandboxed` mode: `notes`, `messages`).
     public static func make(
         app: AppleApp,
+        mode: HostMode,
         configuration: AppleAppsConfiguration = .init(),
         includesSchemaInInstructions: Bool = AppleAppsDefaults.includesSchemaInInstructions
-    ) throws -> any Tool
+    ) throws -> (any Tool)?
 
     /// Makes the tools of the given apps, in the order of `AppleApp.allCases`.
+    /// An app with no operation in the mode is left out.
     public static func make(
         apps: Set<AppleApp>,
+        mode: HostMode,
         configuration: AppleAppsConfiguration = .init(),
         includesSchemaInInstructions: Bool = AppleAppsDefaults.includesSchemaInInstructions
     ) throws -> [any Tool]
@@ -450,6 +546,13 @@ public struct AppleAppsConfiguration: Sendable {
     public var shortcutsOutputLimit: Int // default: 1 MiB
 }
 ```
+
+`HostMode` (`open` or `sandboxed`) is the mode type of the core target of
+FoundationModelsExtras (EXTRAS-12 of the TestudoApp design). It does not exist
+yet. MacControl takes the same type. `mode` has no default value, so each host
+states its mode. `make` throws when the mode is `open` and the process is
+sandboxed (the `com.apple.security.app-sandbox` entitlement of the process is
+`true`), the same as the check of MacControl.
 
 ## 8. Package layout
 
@@ -529,7 +632,9 @@ No change to Multitool is necessary. A host mounts each tool as its own group:
 ```swift
 let builder = MultiTool.Builder()
 for app in enabledApps {
-    builder.addGroup(named: app.rawValue, [try AppleAppsTools.make(app: app)])
+    if let tool = try AppleAppsTools.make(app: app, mode: hostMode) {
+        builder.addGroup(named: app.rawValue, [tool])
+    }
 }
 ```
 
@@ -594,6 +699,23 @@ macOS gives the permission to the responsible process. For a CLI agent that
 is the terminal app or the app that started the agent. `docs/SECURITY.md` and
 the README tell this.
 
+### 11.1 Entitlements for `sandboxed` mode
+
+A sandboxed host (Testudo) needs these entitlements and `Info.plist` keys for
+each tool that it mounts. The package cannot add them. The README lists them.
+
+| Tool | Entitlements | `Info.plist` keys |
+|---|---|---|
+| `calendar`, `reminders` | `com.apple.security.personal-information.calendars` | `NSCalendarsFullAccessUsageDescription`, `NSRemindersFullAccessUsageDescription` |
+| `contacts` | `com.apple.security.personal-information.addressbook` | `NSContactsUsageDescription` |
+| `maps` | `com.apple.security.personal-information.location`, `com.apple.security.network.client` | `NSLocationWhenInUseUsageDescription` |
+| `music` | `com.apple.security.automation.apple-events`, and `com.apple.security.scripting-targets` with `com.apple.Music` → `com.apple.Music.library.read`, `com.apple.Music.playback` | `NSAppleEventsUsageDescription` |
+| `shortcuts` | The same two entitlements, with the Shortcuts target → `com.apple.shortcuts.run` (the bundle id of the target is **unverified**) | `NSAppleEventsUsageDescription` |
+| `mail` | The same two entitlements, with `com.apple.mail` → `com.apple.mail.compose` | `NSAppleEventsUsageDescription` |
+
+`AppleAppsTools.requiredEntitlements(for:)` returns this table for a set of
+apps, so a host test can compare it with the entitlements file of the app.
+
 ## 12. Testing
 
 All tests use Swift Testing (`@Suite`, `@Test`, `#expect`). The root
@@ -616,6 +738,9 @@ select tests.
 | `SendMessageTests` | Delivered, failed then SMS, and not known (no second send), with a fake database and a fake sender. |
 | `ShortcutsCLIBackendTests` | The output cap gives `truncated: true`. A timeout gives the `timeout` correction. Uses a fake CLI script. |
 | `PackageManifestTests` | No Multitool and no `swift-otel` in the library. |
+| `HostModeTests` | In `sandboxed` mode: each tool has exactly the operations of its "Sandbox" column, the op names agree with a golden for each mode, `notes` and `messages` give no tool, and no sandboxed backend uses `ProcessRunner`. `open` mode in a sandboxed process throws. |
+| `InProcessAppleEventRunnerTests` | Arguments go as descriptors, never in the script text. `-1743` gives `accessDenied`. `-10004` gives the sandbox correction. Scripts run one at a time on the runner thread. Uses a fake script executor. |
+| `RequiredEntitlementsTests` | `requiredEntitlements(for:)` agrees with the table of 11.1. |
 
 ### 12.2 Level 2: live, no model
 
@@ -681,7 +806,22 @@ with a green `swift test` and a green
 17. **Example.** `Examples/AppleAppsExample`, with the embedded `Info.plist`.
 18. **Docs.** The full README (one section for each app, with its permission)
     and `docs/SECURITY.md`.
-19. **Agent wiring.** The changes of 10.2 in FoundationModelsACPAgent.
+19. **Agent wiring.** The changes of 10.2 in FoundationModelsACPAgent. The
+    agent is a CLI and runs in `open` mode.
+20. **Host modes.** `mode` in `make` and `operationNames(in:)`, the static list
+    of sandboxed operations of each tool, the check that refuses `open` mode
+    in a sandboxed process, `requiredEntitlements(for:)`, and
+    `HostModeTests`. Depends on EXTRAS-12 (`HostMode` in Extras) and on items
+    5 to 14.
+21. **In-process Apple event runner.** `AppleEventRunner`,
+    `InProcessAppleEventRunner`, `ShortcutsAppleEventBackend`, and the change
+    of the Music, Mail and Shortcuts backends to take the runner. A probe
+    target `SandboxProbe`: a small sandboxed app with the entitlements of 11.1
+    that runs each sandboxed operation. It verifies the **unverified** items
+    of 4.5, 4.8 and 4.9: `send` in `com.apple.mail.compose`, `sound volume`
+    in `com.apple.Music.playback`, the Shortcuts target app and the list of
+    shortcuts in `com.apple.shortcuts.run`. The result updates the "Sandbox"
+    columns. Depends on items 3, 9, 13 and 14.
 
 Items 5 to 14 depend only on items 1 to 4. Thus they can run in parallel.
 
@@ -701,10 +841,13 @@ Items 5 to 14 depend only on items 1 to 4. Thus they can run in parallel.
    Mail and Messages live tests only read and never send.
 6. **One library. — DECIDED (2026-10-14).** One target and one product, with
    one folder for each app.
-7. **AppleScript through `osascript`. — DECIDED (2026-10-14).** Not
-   `NSAppleScript`. `NSAppleScript` must run on one thread and cannot be
-   cancelled. A child process can have a timeout and can be stopped, and
-   `ProcessRunner` of Extras already does this.
+7. **AppleScript through `osascript` in `open` mode. — DECIDED (2026-10-14),
+   changed (2026-10-23).** Not `NSAppleScript` in `open` mode.
+   `NSAppleScript` must run on one thread and cannot be cancelled. A child
+   process can have a timeout and can be stopped, and `ProcessRunner` of
+   Extras already does this. In `sandboxed` mode a child process cannot send
+   Apple events, so that mode uses `NSAppleScript` in the process, on one
+   thread, with an Apple event timeout (decision 13, 5.9).
 8. **GRDB for `chat.db`. — DECIDED (2026-10-14).** The same library as
    CodeContext. The database opens read-only.
 9. **MapKit for Maps. — DECIDED (2026-10-14).** Osaurus does not name its
@@ -715,10 +858,32 @@ Items 5 to 14 depend only on items 1 to 4. Thus they can run in parallel.
     change to Extras is necessary. This was open question 1.
 11. **AppleScript IDs follow Osaurus. — DECIDED (2026-10-14).** See 6.2.
     This was open question 2.
+12. **Two host modes; `sandboxed` registers only what works. — DECIDED
+    (2026-10-23).** The same as MacControl (D128 of the TestudoApp design).
+    The model never sees an operation that cannot work in the sandbox
+    (principle 9, 4.11).
+13. **Scripting access groups only, no temporary exceptions. — DECIDED
+    (2026-10-23).** In `sandboxed` mode, Apple events go only to the access
+    groups that each app publishes. Thus Notes and Messages are not
+    available, and Mail has only `compose message`. Reason: App Review
+    usually rejects `temporary-exception.apple-events`.
 
 ## 15. Open questions
 
-None at this time.
+1. **The Testudo product scope.** Is `calendar`, `reminders`, `contacts`,
+   `maps`, `music`, `shortcuts` and Mail compose enough for the App Store
+   app? Or must Testudo also have Notes and Messages, which only OpenTestudo
+   can give? This is a question for the TestudoApp design.
+2. **Messages reads in the sandbox.** The user could give the app access to
+   `~/Library/Messages` with an open panel (a security-scoped bookmark), and
+   also Full Disk Access. Do both together let a sandboxed app read
+   `chat.db`, `chat.db-wal` and `chat.db-shm`? This is **unverified**, and the
+   user flow is poor. Until a test proves it, `messages` is not in
+   `sandboxed` mode.
+3. **Shortcuts as the path for the other apps.** A user shortcut can read
+   Notes and Messages, and `run shortcut` works in the sandbox. Is a set of
+   shortcuts that Testudo installs (with the consent of the user) an
+   acceptable way to give the read operations of `notes` in `sandboxed` mode?
 
 ## 16. Out of scope
 
