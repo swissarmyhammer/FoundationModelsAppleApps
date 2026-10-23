@@ -282,14 +282,48 @@ the permission dialog.
 
 | Op | Multitool verb | Main arguments | Sandbox |
 |---|---|---|---|
-| `list shortcuts` | `listShortcuts` | `folder?` | Yes (`com.apple.shortcuts.run`, **unverified**) |
+| `list shortcuts` | `listShortcuts` | `folder?` | Yes (`com.apple.shortcuts.run`) |
 | `run shortcut` | `runShortcut` | `name`, `input?`, `timeoutSeconds?` | Yes (`com.apple.shortcuts.run`) |
 
 In `sandboxed` mode the tool cannot start `/usr/bin/shortcuts`, because a
 child process inherits the sandbox. The sandboxed backend sends Apple events
-instead. Shortcuts publishes the access group `com.apple.shortcuts.run`. Which
-app receives the events (Shortcuts, or Shortcuts Events) and whether
-`folder` works there are **unverified** (work item 21).
+to **Shortcuts Events** (`com.apple.shortcuts.events`) instead. This is the
+path that Apple gives for apps:
+
+- **Apple says to use it.** WWDC21 session 10232 ("Meet Shortcuts for
+  macOS") says that an app that runs shortcuts must use the scripting
+  interface of the Shortcuts Events process, not the command-line tool. A
+  sandboxed app adds `com.apple.security.scripting-targets` with the
+  `com.apple.shortcuts.run` access group. The session shows the Scripting
+  Bridge code: `SBApplication(bundleIdentifier: "com.apple.shortcuts.events")`,
+  the `shortcuts` element, and `run(withInput:) -> Any?`.
+- **The target key is `com.apple.shortcuts.events`.** An Apple engineer on the
+  Developer Forums (thread 698879) says that the key in the
+  `scripting-targets` dictionary must be the bundle id of Shortcuts Events. The
+  forum reports that the WWDC slide had a wrong key, and that App Store upload
+  refused that wrong key.
+- **The `sdef` agrees (macOS 27, 2026-10-23).** Shortcuts Events uses the
+  same `Shortcuts.sdef` as the Shortcuts app. The `shortcut` and `folder`
+  elements, and their properties (`name`, `id`, `folder`, `accepts input`),
+  are readable in `com.apple.shortcuts.run`. The `run` command is in
+  `com.apple.shortcuts.run`, takes `with input` (any type) and returns the
+  result of the shortcut. Thus `list shortcuts` and its `folder` filter work
+  in `sandboxed` mode. `com.apple.shortcuts.organize` (change a folder) is not
+  needed.
+- **Shortcuts Events runs the shortcut in the background.** The Shortcuts
+  app does not open.
+- **The user approves one Automation prompt** ("… wants to control Shortcuts
+  Events"), with the text of `NSAppleEventsUsageDescription`. A denied prompt
+  gives the `-1743` error; the tool returns a correction that tells the user to
+  allow it in System Settings > Privacy & Security > Automation.
+- **A shortcut runs outside the sandbox of the host.** It runs in the process
+  of Shortcuts Events, with the permissions of Shortcuts. Thus a shortcut that
+  the user made can do work that the host cannot do. The risk check of the host
+  must treat `run shortcut` as an operation whose effect it cannot know before
+  the run. The package does not install shortcuts (decision 3).
+- **Not used:** the `shortcuts://x-callback-url/run-shortcut` URL scheme. It
+  works in the sandbox, but it opens the Shortcuts app and returns the result
+  only through a callback URL.
 
 ### 4.10 Aliases
 
@@ -710,7 +744,7 @@ each tool that it mounts. The package cannot add them. The README lists them.
 | `contacts` | `com.apple.security.personal-information.addressbook` | `NSContactsUsageDescription` |
 | `maps` | `com.apple.security.personal-information.location`, `com.apple.security.network.client` | `NSLocationWhenInUseUsageDescription` |
 | `music` | `com.apple.security.automation.apple-events`, and `com.apple.security.scripting-targets` with `com.apple.Music` → `com.apple.Music.library.read`, `com.apple.Music.playback` | `NSAppleEventsUsageDescription` |
-| `shortcuts` | The same two entitlements, with the Shortcuts target → `com.apple.shortcuts.run` (the bundle id of the target is **unverified**) | `NSAppleEventsUsageDescription` |
+| `shortcuts` | The same two entitlements, with `com.apple.shortcuts.events` → `com.apple.shortcuts.run` (4.9) | `NSAppleEventsUsageDescription` |
 | `mail` | The same two entitlements, with `com.apple.mail` → `com.apple.mail.compose` | `NSAppleEventsUsageDescription` |
 
 `AppleAppsTools.requiredEntitlements(for:)` returns this table for a set of
@@ -818,10 +852,10 @@ with a green `swift test` and a green
     of the Music, Mail and Shortcuts backends to take the runner. A probe
     target `SandboxProbe`: a small sandboxed app with the entitlements of 11.1
     that runs each sandboxed operation. It verifies the **unverified** items
-    of 4.5, 4.8 and 4.9: `send` in `com.apple.mail.compose`, `sound volume`
-    in `com.apple.Music.playback`, the Shortcuts target app and the list of
-    shortcuts in `com.apple.shortcuts.run`. The result updates the "Sandbox"
-    columns. Depends on items 3, 9, 13 and 14.
+    of 4.5 and 4.8: `send` in `com.apple.mail.compose` and `sound volume`
+    in `com.apple.Music.playback`. It also runs `list shortcuts` and
+    `run shortcut` as a regression check of 4.9. The result updates the
+    "Sandbox" columns. Depends on items 3, 9, 13 and 14.
 
 Items 5 to 14 depend only on items 1 to 4. Thus they can run in parallel.
 
